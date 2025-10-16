@@ -39,20 +39,29 @@ func CheckPasswordHash(password, hashedPassword string) bool {
 func ValidatePassword(password string) error {
 	hasUpper := false
 	hasSymbol := false
+	hasNumber := false
+
 	for _, r := range password {
-		if unicode.IsUpper(r) {
+		switch {
+		case unicode.IsUpper(r):
 			hasUpper = true
-		}
-		if unicode.IsSymbol(r) || unicode.IsPunct(r) {
+		case unicode.IsDigit(r):
+			hasNumber = true
+		case unicode.IsSymbol(r), unicode.IsPunct(r):
 			hasSymbol = true
 		}
 	}
+
 	if !hasUpper {
 		return fmt.Errorf("uppercase-password must contain at least one uppercase letter")
+	}
+	if !hasNumber {
+		return fmt.Errorf("number-password must contain at least one number")
 	}
 	if !hasSymbol {
 		return fmt.Errorf("symbol-password must contain at least one symbol")
 	}
+
 	return nil
 }
 

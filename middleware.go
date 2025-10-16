@@ -3,6 +3,7 @@ package gorote
 import (
 	"crypto/rsa"
 	"fmt"
+	"mime/multipart"
 	"reflect"
 	"time"
 
@@ -14,6 +15,13 @@ import (
 )
 
 type HandlerJWTProtected func(jwt.Claims) *fiber.Error
+
+type parseInfo struct {
+	hasQuery  bool
+	hasJSON   bool
+	hasParams bool
+	hasForm   bool
+}
 
 func Check() fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
@@ -62,45 +70,94 @@ func JWTProtectedRSA(claims jwt.Claims, publicKey *rsa.PublicKey, handles ...Han
 
 func ValidationMiddleware(requestStruct any) fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
-		v := reflect.ValueOf(requestStruct)
-		if v.Kind() == reflect.Ptr {
-			v = v.Elem()
+		typ := reflect.TypeOf(requestStruct)
+		if typ.Kind() == reflect.Ptr {
+			typ = typ.Elem()
 		}
-		if v.Kind() != reflect.Struct {
+
+		if typ.Kind() != reflect.Struct {
 			return fiber.NewError(fiber.StatusInternalServerError, "validation target must be a struct")
 		}
-		t := v.Type()
-		var foundTag bool
-		var parseErr error
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
-			if _, ok := field.Tag.Lookup("query"); ok {
-				foundTag = true
-				if parseErr = ctx.QueryParser(requestStruct); parseErr != nil {
-					return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid query parameters: %s", parseErr.Error()))
-				}
-			}
-			if _, ok := field.Tag.Lookup("json"); ok {
-				foundTag = true
-				if parseErr = ctx.BodyParser(requestStruct); parseErr != nil {
-					return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid body: %s", parseErr.Error()))
-				}
-			}
-			if _, ok := field.Tag.Lookup("param"); ok {
-				foundTag = true
-				if parseErr = ctx.ParamsParser(requestStruct); parseErr != nil {
-					return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid URL parameters: %s", parseErr.Error()))
-				}
+
+		info := analyzeStructTags(typ)
+		instance := reflect.New(typ).Interface()
+		if info.hasParams {
+			if err := ctx.ParamsParser(instance); err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid params: %v", err))
 			}
 		}
-		if !foundTag {
-			return fiber.NewError(fiber.StatusBadRequest, "no valid tags found in struct (query, json or params)")
+		if info.hasQuery {
+			if err := ctx.QueryParser(instance); err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid query: %v", err))
+			}
 		}
-		if err := validateStruct(requestStruct); err != nil {
+		if info.hasJSON {
+			if err := ctx.BodyParser(instance); err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid JSON body: %v", err))
+			}
+		}
+
+		if info.hasForm {
+			parseFormFields(ctx, instance)
+		}
+
+		if err := validateStruct(instance); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
-		ctx.Locals("validatedData", requestStruct)
+
+		ctx.Locals("validatedData", instance)
 		return ctx.Next()
+	}
+}
+
+func analyzeStructTags(typ reflect.Type) *parseInfo {
+	info := &parseInfo{}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if _, ok := field.Tag.Lookup("query"); ok {
+			info.hasQuery = true
+		}
+		if _, ok := field.Tag.Lookup("json"); ok {
+			info.hasJSON = true
+		}
+		if _, ok := field.Tag.Lookup("param"); ok {
+			info.hasParams = true
+		}
+		if _, ok := field.Tag.Lookup("form"); ok {
+			info.hasForm = true
+		}
+	}
+	return info
+}
+
+func parseFormFields(ctx *fiber.Ctx, instance any) {
+	val := reflect.ValueOf(instance).Elem()
+	typ := val.Type()
+
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		fieldVal := val.Field(i)
+		formTag := field.Tag.Get("form")
+		if formTag == "" {
+			continue
+		}
+
+		switch field.Type {
+		case reflect.TypeOf((*multipart.FileHeader)(nil)):
+			file, err := ctx.FormFile(formTag)
+			if err == nil && fieldVal.CanSet() {
+				fieldVal.Set(reflect.ValueOf(file))
+			}
+		case reflect.TypeOf([]*multipart.FileHeader{}):
+			form, err := ctx.MultipartForm()
+			if err == nil && form != nil && form.File[formTag] != nil {
+				fieldVal.Set(reflect.ValueOf(form.File[formTag]))
+			}
+		default:
+			if fieldVal.Kind() == reflect.String && fieldVal.CanSet() {
+				fieldVal.SetString(ctx.FormValue(formTag))
+			}
+		}
 	}
 }
 
