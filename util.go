@@ -129,7 +129,7 @@ func RemoveInvisibleChars(input string) string {
 
 func getJSONFieldName(s any, field string) string {
 	t := reflect.TypeOf(s)
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -153,12 +153,30 @@ func splitJSONTag(tag string) string {
 
 func validateStruct(data any) error {
 	validate := validator.New()
+
+	_ = validate.RegisterValidation("regexp", func(fl validator.FieldLevel) bool {
+		pattern := fl.Param()
+		if pattern == "" {
+			return true
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(fl.Field().String())
+	})
+
 	err := validate.Struct(data)
 	if err != nil {
 		if validationErrors, ok := err.(validator.ValidationErrors); ok {
 			for _, err := range validationErrors {
 				jsonField := getJSONFieldName(data, err.StructField())
-				return fmt.Errorf("invalid validation: (field: '%s' is %s type: %s)", jsonField, err.ActualTag(), err.Type())
+				return fmt.Errorf(
+					"invalid validation: field '%s' failed on '%s' rule (value: '%v')",
+					jsonField,
+					err.Tag(),
+					err.Value(),
+				)
 			}
 		}
 		return fmt.Errorf("invalid data: %s", err.Error())
