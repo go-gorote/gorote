@@ -71,7 +71,7 @@ func JWTProtectedRSA(claims jwt.Claims, publicKey *rsa.PublicKey, handles ...Han
 func ValidationMiddleware(requestStruct any) fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
 		typ := reflect.TypeOf(requestStruct)
-		if typ.Kind() == reflect.Ptr {
+		if typ.Kind() == reflect.Pointer {
 			typ = typ.Elem()
 		}
 
