@@ -152,7 +152,7 @@ func splitJSONTag(tag string) string {
 	return tag
 }
 
-func validateStruct(data any) error {
+func ValidateStruct(data any) error {
 	validate := validator.New()
 
 	_ = validate.RegisterValidation("regexp", func(fl validator.FieldLevel) bool {

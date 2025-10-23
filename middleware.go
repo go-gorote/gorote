@@ -101,7 +101,7 @@ func ValidationMiddleware(requestStruct any) fiber.Handler {
 			parseFormFields(ctx, instance)
 		}
 
-		if err := validateStruct(instance); err != nil {
+		if err := ValidateStruct(instance); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 
